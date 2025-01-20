@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2022, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,6 +26,11 @@
 package sun.security.jca;
 
 import java.security.Provider;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+import jdk.internal.loader.ClassLoaders;
 import sun.security.x509.AlgorithmId;
 
 /**
@@ -59,74 +64,54 @@ public class Providers {
         // empty
     }
 
-    // After the switch to modules, JDK providers are all in modules and JDK
-    // no longer needs to load signed jars during start up.
+    // JDK providers loaded by the Bootstrap and Platform class loaders are all
+    // in modules that do not require JAR signature verification. Thus, they
+    // are safe to be used for verifying JAR signatures without circularities
+    // and infinite recursion. Otherwise, loading a service implementation
+    // class of a signed-JAR (installed) provider could trigger lazy class file
+    // verification and the same provider chosen again, repeating the cycle.
     //
-    // However, for earlier releases, it needs special handling to resolve
-    // circularities when loading signed JAR files during startup. The code
-    // below is part of that.
+    // The strategy for JAR signature verification is to execute all
+    // cryptographic operations required by
+    // sun.security.util.SignatureFileVerifier and
+    // sun.security.util.ManifestEntryVerifier (e.g. CertificateFactory,
+    // Signature, MessageDigest) within a thread-local context where
+    // Providers::getProviderList returns a safe list of providers.
     //
-    // Basically, before we load data from a signed JAR file, we parse
-    // the PKCS#7 file and verify the signature. We need a
-    // CertificateFactory, Signatures, etc. to do that. We have to make
-    // sure that we do not try to load the implementation from the JAR
-    // file we are just verifying.
-    //
-    // To avoid that, we use different provider settings during JAR
-    // verification.  However, we do not want those provider settings to
-    // interfere with other parts of the system. Therefore, we make them local
-    // to the Thread executing the JAR verification code.
-    //
-    // The code here is used by sun.security.util.SignatureFileVerifier.
-    // See there for details.
-
-    // Hardcoded names of providers to use for JAR verification.
-    // MUST NOT be on the bootclasspath and not in signed JAR files.
+    // The safe list of providers is the result of filtering those
+    // coming from the JDK configuration (installed statically or
+    // dynamically) and a minimal fixed list referred by
+    // Providers::jarVerificationProviders.
     private static final String[] jarVerificationProviders = {
         "SUN",
         "SunRsaSign",
-        // Note: when SunEC is in a signed JAR file, it's not signed
-        // by EC algorithms. So it's still safe to be listed here.
         "SunEC",
         "SunJCE",
     };
 
+    /**
+     * Get a ProviderList for JAR verification.
+     */
+    public static ProviderList getProviderListForJarVerification() {
+        ProviderList systemProviderList = getSystemProviderList();
+        List<Provider> systemProviders = systemProviderList.providers();
+        List<ProviderConfig> systemConfigs = systemProviderList.configs();
+        List<Provider> jarProviderList = new ArrayList<>();
+        systemProviders.stream().filter((Provider p) -> {
+            ClassLoader cl = p.getClass().getClassLoader();
+            return cl == null || cl.equals(ClassLoaders.platformClassLoader());
+        }).forEach(jarProviderList::add);
+        Arrays.stream(jarVerificationProviders).map(ProviderConfig::new)
+                .filter((ProviderConfig pc) -> !systemConfigs.contains(pc))
+                .map(ProviderConfig::getProvider)
+                .forEach(jarProviderList::add);
+        return ProviderList.newList(jarProviderList.toArray(new Provider[0]));
+    }
+
     // Return Sun provider.
-    // This method should only be called by
-    // sun.security.util.ManifestEntryVerifier and java.security.SecureRandom.
+    // This method should only be called by java.security.SecureRandom.
     public static Provider getSunProvider() {
         return new sun.security.provider.Sun();
-    }
-
-    /**
-     * Start JAR verification. This sets a special provider list for
-     * the current thread. You MUST save the return value from this
-     * method, and you MUST call stopJarVerification() with that object
-     * once you are done.
-     */
-    public static Object startJarVerification() {
-        ProviderList currentList = getProviderList();
-        ProviderList jarList = currentList.getJarList(jarVerificationProviders);
-        if (jarList.getProvider("SUN") == null) {
-            // add backup provider
-            Provider p;
-            try {
-                p = new sun.security.provider.VerificationProvider();
-            } catch (Exception e) {
-                throw new RuntimeException("Missing provider for jar verification", e);
-            }
-            ProviderList.add(jarList, p);
-        }
-        // return the old thread-local provider list, usually null
-        return beginThreadProviderList(jarList);
-    }
-
-    /**
-     * Stop JAR verification. Call once you have completed JAR verification.
-     */
-    public static void stopJarVerification(Object obj) {
-        // restore old thread-local provider list
-        endThreadProviderList((ProviderList)obj);
     }
 
     /**
@@ -216,22 +201,31 @@ public class Providers {
     }
 
     /**
-     * Methods to manipulate the thread local provider list. It is for use by
-     * JAR verification (see above).
+     * AutoCloseable to temporarily manipulate the thread local provider list.
+     * It is for use by JAR verification (see above).
      *
      * It should be used as follows:
-     *
-     *   ProviderList list = ...;
-     *   ProviderList oldList = Providers.beginThreadProviderList(list);
-     *   try {
+     * <pre>{@code
+     * ProviderList list = ...;
+     * try (var _ = new Providers.ThreadLocalList(list)) {
      *     // code that needs thread local provider list
-     *   } finally {
-     *     Providers.endThreadProviderList(oldList);
-     *   }
-     *
+     * }
+     * }</pre>
      */
+    public static final class ThreadLocalList implements AutoCloseable {
+        private final ProviderList oldList;
 
-    public static synchronized ProviderList beginThreadProviderList(ProviderList list) {
+        public ThreadLocalList(ProviderList list) {
+            oldList = beginThreadProviderList(list);
+        }
+
+        @Override
+        public void close() {
+            endThreadProviderList(oldList);
+        }
+    }
+
+    private static synchronized ProviderList beginThreadProviderList(ProviderList list) {
         if (ProviderList.debug != null) {
             ProviderList.debug.println("ThreadLocal providers: " + list);
         }
@@ -241,7 +235,7 @@ public class Providers {
         return oldList;
     }
 
-    public static synchronized void endThreadProviderList(ProviderList list) {
+    private static synchronized void endThreadProviderList(ProviderList list) {
         if (list == null) {
             if (ProviderList.debug != null) {
                 ProviderList.debug.println("Disabling ThreadLocal providers");

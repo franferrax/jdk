@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -37,6 +37,7 @@ import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 
 import jdk.internal.util.ArraysSupport;
+import sun.security.jca.ProviderList;
 import sun.security.jca.Providers;
 import sun.security.pkcs.PKCS7;
 import sun.security.pkcs.SignerInfo;
@@ -82,6 +83,8 @@ public class SignatureFileVerifier {
     /** ConstraintsParameters for checking disabled algorithms */
     private JarConstraintsParameters params;
 
+    private final ProviderList providerList;
+
     private static final String META_INF = "META-INF/";
 
     // the maximum allowed size in bytes for the signature-related files
@@ -98,26 +101,21 @@ public class SignatureFileVerifier {
      * @param rawBytes the raw bytes of the signature block file
      */
     public SignatureFileVerifier(ArrayList<CodeSigner[]> signerCache,
-                                 ManifestDigester md,
-                                 String name,
-                                 byte[] rawBytes)
-        throws IOException, CertificateException
-    {
+            ManifestDigester md, String name, byte[] rawBytes,
+            ProviderList providerList)
+            throws IOException, CertificateException {
         // new PKCS7() calls CertificateFactory.getInstance()
         // need to use local providers here, see Providers class
-        Object obj = null;
-        try {
-            obj = Providers.startJarVerification();
+        try (var _ = new Providers.ThreadLocalList(providerList)) {
             block = new PKCS7(rawBytes);
             sfBytes = block.getContentInfo().getData();
             certificateFactory = CertificateFactory.getInstance("X509");
-        } finally {
-            Providers.stopJarVerification(obj);
         }
         this.name = name.substring(0, name.lastIndexOf('.'))
                                                    .toUpperCase(Locale.ENGLISH);
         this.md = md;
         this.signerCache = signerCache;
+        this.providerList = providerList;
     }
 
     /**
@@ -275,14 +273,9 @@ public class SignatureFileVerifier {
     {
         // calls Signature.getInstance() and MessageDigest.getInstance()
         // need to use local providers here, see Providers class
-        Object obj = null;
-        try {
-            obj = Providers.startJarVerification();
+        try (var _ = new Providers.ThreadLocalList(providerList)) {
             processImpl(signers, manifestDigests, manifestName);
-        } finally {
-            Providers.stopJarVerification(obj);
         }
-
     }
 
     private void processImpl(Hashtable<String, CodeSigner[]> signers,

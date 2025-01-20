@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2022, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -48,8 +48,6 @@ public final class SunRsaSignEntries {
              getAliases(algo), attrs));
     }
 
-    // extend LinkedHashSet for consistency with SunEntries
-    // used by sun.security.provider.VerificationProvider
     public SunRsaSignEntries(Provider p) {
         services = new LinkedHashSet<>(20, 0.9f);
 

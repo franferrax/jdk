@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -223,33 +223,6 @@ public final class ProviderList {
         }
     }
 
-    /**
-     * Construct a special ProviderList for JAR verification. It consists
-     * of the providers specified via jarClassNames, which must be on the
-     * bootclasspath and cannot be in signed JAR files. This is to avoid
-     * possible recursion and deadlock during verification.
-     */
-    ProviderList getJarList(String[] jarProvNames) {
-        List<ProviderConfig> newConfigs = new ArrayList<>();
-        for (String provName : jarProvNames) {
-            ProviderConfig newConfig = new ProviderConfig(provName);
-            for (ProviderConfig config : configs) {
-                // if the equivalent object is present in this provider list,
-                // use the old object rather than the new object.
-                // this ensures that when the provider is loaded in the
-                // new thread local list, it will also become available
-                // in this provider list
-                if (config.equals(newConfig)) {
-                    newConfig = config;
-                    break;
-                }
-            }
-            newConfigs.add(newConfig);
-        }
-        ProviderConfig[] configArray = newConfigs.toArray(PC0);
-        return new ProviderList(configArray, false);
-    }
-
     public int size() {
         return configs.length;
     }
@@ -270,6 +243,13 @@ public final class ProviderList {
      */
     public List<Provider> providers() {
         return userList;
+    }
+
+    /**
+     * Return an unmodifiable List of all ProviderConfigs in this List.
+     */
+    List<ProviderConfig> configs() {
+        return Collections.unmodifiableList(Arrays.asList(configs));
     }
 
     private ProviderConfig getProviderConfig(String name) {

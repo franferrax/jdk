@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2022, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -30,6 +30,7 @@ import java.security.*;
 import java.util.*;
 import java.util.jar.*;
 
+import sun.security.jca.ProviderList;
 import sun.security.jca.Providers;
 
 /**
@@ -40,16 +41,6 @@ import sun.security.jca.Providers;
 public class ManifestEntryVerifier {
 
     private static final Debug debug = Debug.getInstance("jar");
-
-    /**
-     * Holder class to lazily load Sun provider. NOTE: if
-     * Providers.getSunProvider returned a cached provider, we could avoid the
-     * need for caching the provider with this holder class; we should try to
-     * revisit this in JDK 8.
-     */
-    private static class SunProviderHolder {
-        private static final Provider instance = Providers.getSunProvider();
-    }
 
     /** the created digest objects */
     HashMap<String, MessageDigest> createdDigests;
@@ -62,8 +53,9 @@ public class ManifestEntryVerifier {
 
     private String name = null;
 
-    private final String manifestFileName; // never null
     private final Manifest man;
+
+    private final ProviderList providerList;
 
     private boolean skip = true;
 
@@ -74,13 +66,12 @@ public class ManifestEntryVerifier {
     /**
      * Create a new ManifestEntryVerifier object.
      */
-    public ManifestEntryVerifier(Manifest man, String manifestFileName)
-    {
+    public ManifestEntryVerifier(Manifest man, ProviderList providerList) {
         createdDigests = new HashMap<>(11);
         digests = new ArrayList<>();
         manifestHashes = new ArrayList<>();
-        this.manifestFileName = manifestFileName;
         this.man = man;
+        this.providerList = providerList;
     }
 
     /**
@@ -132,10 +123,8 @@ public class ManifestEntryVerifier {
                 MessageDigest digest = createdDigests.get(algorithm);
 
                 if (digest == null) {
-                    try {
-
-                        digest = MessageDigest.getInstance
-                                        (algorithm, SunProviderHolder.instance);
+                    try (var _ = new Providers.ThreadLocalList(providerList)) {
+                        digest = MessageDigest.getInstance(algorithm);
                         createdDigests.put(algorithm, digest);
                     } catch (NoSuchAlgorithmException nsae) {
                         // ignore

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2023, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -33,6 +33,8 @@ import java.security.SignatureException;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 
+import sun.security.jca.ProviderList;
+import sun.security.jca.Providers;
 import sun.security.util.ManifestDigester;
 import sun.security.util.ManifestEntryVerifier;
 import sun.security.util.SignatureFileVerifier;
@@ -96,6 +98,8 @@ class JarVerifier {
        entries, and whether or not the algorithms are permitted. */
     private Map<CodeSigner[], Map<String, Boolean>> signersToAlgs;
 
+    final ProviderList providerList;
+
     public JarVerifier(String name, byte[] rawBytes) {
         manifestName = name;
         manifestRawBytes = rawBytes;
@@ -106,6 +110,7 @@ class JarVerifier {
         baos = new ByteArrayOutputStream();
         manifestDigests = new ArrayList<>();
         signersToAlgs = new HashMap<>();
+        providerList = Providers.getProviderListForJarVerification();
     }
 
     /**
@@ -296,9 +301,9 @@ class JarVerifier {
                     }
                 }
 
-                SignatureFileVerifier sfv =
-                  new SignatureFileVerifier(signerCache,
-                                            manDig, uname, baos.toByteArray());
+                SignatureFileVerifier sfv = new SignatureFileVerifier(
+                        signerCache, manDig, uname, baos.toByteArray(),
+                        providerList);
 
                 if (sfv.needSignatureFileBytes()) {
                     // see if we have already parsed an external .SF file
@@ -414,7 +419,7 @@ class JarVerifier {
         {
             this.is = Objects.requireNonNull(is);
             this.jv = jv;
-            this.mev = new ManifestEntryVerifier(man, jv.manifestName);
+            this.mev = new ManifestEntryVerifier(man, jv.providerList);
             this.jv.beginEntry(je, mev);
             this.numLeft = je.getSize();
             if (this.numLeft == 0)
