@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1996, 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1996, 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,6 +25,7 @@
 
 package java.security;
 
+import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -33,7 +34,6 @@ import java.net.URI;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
-import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Enumeration;
@@ -110,9 +110,9 @@ public final class Security {
         private static final String EXTRA_SYS_PROP =
                 "java.security.properties";
 
-        private static Path currentPath;
+        private static File currentPath;
 
-        private static final Set<Path> activePaths = new HashSet<>();
+        private static final Set<File> activePaths = new HashSet<>();
 
         static void loadAll() {
             // first load the master properties file to
@@ -136,8 +136,10 @@ public final class Security {
 
         private static void loadMaster() {
             try {
-                loadFromPath(Path.of(StaticProperty.javaHome(), "conf",
-                        "security", "java.security"), LoadingMode.APPEND);
+                String relPath = "conf" + File.separator + "security" +
+                        File.separator + "java.security";
+                loadFromPath(new File(StaticProperty.javaHome(), relPath),
+                        LoadingMode.APPEND);
             } catch (IOException e) {
                 throw new InternalError("Error loading java.security file", e);
             }
@@ -201,10 +203,10 @@ public final class Security {
 
         private static Exception loadExtraFromPath(String propFile,
                 LoadingMode mode) throws Exception {
-            Path path;
+            File path;
             try {
-                path = Path.of(propFile);
-                if (!Files.exists(path)) {
+                path = new File(propFile);
+                if (!path.exists()) {
                     return new FileNotFoundException(propFile);
                 }
             } catch (InvalidPathException e) {
@@ -217,9 +219,9 @@ public final class Security {
 
         private static Exception loadExtraFromFileUrl(URI uri, LoadingMode mode)
                 throws Exception {
-            Path path;
+            File path;
             try {
-                path = Path.of(uri);
+                path = new File(uri);
             } catch (Exception e) {
                 return e;
             }
@@ -245,7 +247,7 @@ public final class Security {
                                 " (expanded to '" + expPropFile + "')"));
             }
             try {
-                Path path = Path.of(expPropFile);
+                File path = new File(expPropFile);
                 if (!path.isAbsolute()) {
                     if (currentPath == null) {
                         throw new InternalError("Cannot resolve '" +
@@ -253,7 +255,12 @@ public final class Security {
                                 "from a non-regular properties file " +
                                 "(e.g. HTTP served file)");
                     }
-                    path = currentPath.resolveSibling(path);
+                    // Inside loadFromPath, we have performed symlinks
+                    // resolution on currentPath under the rationale that
+                    // the original file writer is the one who decided
+                    // where the relative includes should resolve.
+                    path = new File(currentPath.getParentFile(),
+                            path.toString());
                 }
                 loadFromPath(path, LoadingMode.APPEND);
             } catch (IOException | InvalidPathException e) {
@@ -262,22 +269,19 @@ public final class Security {
             }
         }
 
-        private static void loadFromPath(Path path, LoadingMode mode)
+        private static void loadFromPath(File path, LoadingMode mode)
                 throws IOException {
-            boolean isRegularFile = Files.isRegularFile(path);
-            if (isRegularFile) {
-                path = path.toRealPath();
-            } else if (Files.isDirectory(path)) {
+            boolean isRegularFile = path.isFile();
+            if (!isRegularFile && path.isDirectory()) {
                 throw new IOException("Is a directory");
-            } else {
-                path = path.toAbsolutePath();
             }
+            path = path.getCanonicalFile();
             if (activePaths.contains(path)) {
                 throw new InternalError("Cyclic include of '" + path + "'");
             }
-            try (InputStream is = Files.newInputStream(path)) {
+            try (InputStream is = Files.newInputStream(path.toPath())) {
                 reset(mode);
-                Path previousPath = currentPath;
+                File previousPath = currentPath;
                 currentPath = isRegularFile ? path : null;
                 activePaths.add(path);
                 try {
