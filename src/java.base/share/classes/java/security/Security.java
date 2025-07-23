@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1996, 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1996, 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -253,7 +253,10 @@ public final class Security {
                                 "from a non-regular properties file " +
                                 "(e.g. HTTP served file)");
                     }
-                    path = currentPath.resolveSibling(path);
+                    // We perform symlinks resolution on currentPath under the
+                    // rationale that the original file writer is the one who
+                    // decided where the relative includes should resolve.
+                    path = currentPath.toRealPath().resolveSibling(path);
                 }
                 loadFromPath(path, LoadingMode.APPEND);
             } catch (IOException | InvalidPathException e) {
@@ -265,12 +268,8 @@ public final class Security {
         private static void loadFromPath(Path path, LoadingMode mode)
                 throws IOException {
             boolean isRegularFile = Files.isRegularFile(path);
-            if (isRegularFile) {
-                path = path.toRealPath();
-            } else if (Files.isDirectory(path)) {
+            if (!isRegularFile && Files.isDirectory(path)) {
                 throw new IOException("Is a directory");
-            } else {
-                path = path.toAbsolutePath();
             }
             if (activePaths.contains(path)) {
                 throw new InternalError("Cyclic include of '" + path + "'");
@@ -304,6 +303,11 @@ public final class Security {
         private static void debugLoad(boolean start, Object source) {
             if (sdebug != null) {
                 int level = activePaths.isEmpty() ? 1 : activePaths.size();
+                if (source instanceof Path path) {
+                    try {
+                        source = path.toRealPath();
+                    } catch (IOException ignore) {}
+                }
                 sdebug.println((start ?
                         ">".repeat(level) + " starting to process " :
                         "<".repeat(level) + " finished processing ") + source);
