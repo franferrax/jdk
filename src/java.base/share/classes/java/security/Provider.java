@@ -1203,6 +1203,39 @@ public abstract class Provider extends Properties {
         return serviceSet;
     }
 
+    /* ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ FIPS PATCH ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ */
+    private static final class FIPSMode {
+        static final boolean IS_ON = Boolean.parseBoolean(
+                java.security.Security.getProperty("$fips$"));
+        private static final Set<String> ANY_SERVICE_TYPE = Set.of();
+        private static final Map<String, Set<String>> ALLOW_LIST = Map.of(
+                "SunPKCS11-FIPS", ANY_SERVICE_TYPE,
+                "SUN", Set.of(
+                        "AlgorithmParameterGenerator",
+                        "AlgorithmParameters", "CertificateFactory",
+                        "CertPathBuilder", "CertPathValidator", "CertStore",
+                        "Configuration", "KeyStore"),
+                "SunEC", Set.of(
+                        "AlgorithmParameters", "KeyFactory"),
+                "SunJSSE", ANY_SERVICE_TYPE,
+                "SunJCE", Set.of(
+                        "AlgorithmParameters",
+                        "AlgorithmParameterGenerator", "KeyFactory",
+                        "SecretKeyFactory"),
+                "SunRsaSign", Set.of(
+                        "KeyFactory", "AlgorithmParameters"),
+                "XMLDSig", ANY_SERVICE_TYPE
+        );
+
+        static boolean isAllowed(String provName, String serviceType) {
+            Set<String> allowedServiceTypes = ALLOW_LIST.get(provName);
+            return allowedServiceTypes != null &&
+                    (allowedServiceTypes == ANY_SERVICE_TYPE ||
+                            allowedServiceTypes.contains(serviceType));
+        }
+    }
+    /* ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑ FIPS PATCH ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑ */
+
     /**
      * Add a service. If a service of the same type with the same algorithm
      * name exists, and it was added using {@link #putService putService()},
@@ -1231,6 +1264,14 @@ public abstract class Provider extends Properties {
                     ("service.getProvider() must match this Provider object");
         }
         String type = s.getType();
+        /* ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ FIPS PATCH ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ */
+        if (FIPSMode.IS_ON && !FIPSMode.isAllowed(name, type)) {
+            if (debug != null) {
+                System.err.println("^^^^ Skipped by FIPS automation ^^^^");
+            }
+            return;
+        }
+        /* ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑ FIPS PATCH ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑ */
         String algorithm = s.getAlgorithm();
         ServiceKey key = new ServiceKey(type, algorithm, true);
         implRemoveService(serviceMap.get(key));
