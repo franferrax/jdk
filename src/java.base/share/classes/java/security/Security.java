@@ -323,6 +323,14 @@ public final class Security {
     }
 
     private static void initialize() {
+        /* ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ FIPS PATCH ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ */
+        boolean fipsEnabled = false;
+        try {
+            Path kernelFile = Path.of("/proc/sys/crypto/fips_enabled");
+            fipsEnabled = Files.readAllBytes(kernelFile)[0] == '1';
+        } catch (IOException ignore) {}
+        System.setProperty("os.kernel.fips", "" + fipsEnabled);
+        /* ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑ FIPS PATCH ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑ */
         SecPropLoader.loadAll();
         initialSecurityProperties = (Properties) props.clone();
         if (sdebug != null) {
