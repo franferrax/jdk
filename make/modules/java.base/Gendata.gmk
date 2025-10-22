@@ -95,3 +95,14 @@ $(GENDATA_JAVA_SECURITY): $(BUILD_TOOLS_JDK) $(GENDATA_JAVA_SECURITY_SRC) $(REST
 TARGETS += $(GENDATA_JAVA_SECURITY)
 
 ################################################################################
+
+$(eval $(call SetupCopyFiles, GENDATA_ADDITIONAL_FIPS_FILES, \
+    DEST := $(dir $(GENDATA_JAVA_SECURITY)), \
+    FILES := $(wildcard $(addprefix $(dir $(GENDATA_JAVA_SECURITY_SRC))/, \
+                 *.properties *.cfg \
+             )), \
+))
+
+TARGETS += $(GENDATA_ADDITIONAL_FIPS_FILES)
+
+################################################################################

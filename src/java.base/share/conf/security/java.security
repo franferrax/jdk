@@ -1574,3 +1574,55 @@ jdk.tls.alpnCharset=ISO_8859_1
 # withEncryption method.
 #
 jdk.epkcs8.defaultAlgorithm=PBEWithHmacSHA256AndAES_128
+
+#
+# System-wide crypto-policies and FIPS setup
+#
+# The following crypto-policies setup automatically detects when the system
+# is in FIPS mode and configures OpenJDK accordingly. If OpenJDK needs to
+# ignore the system and disable its FIPS setup, just disable the usage of
+# the system crypto-policies, by any of the methods described below.
+#
+# The jdk.security.useSystemCryptoPolicies system property is a boolean
+# switch that controls the usage on a per-run basis. For example, pass
+# -Djdk.security.useSystemCryptoPolicies=false to disable the system
+# crypto-policies.
+#
+# This setup consist of the following files in $JAVA_HOME/conf/security:
+#
+#   'crypto-policies.false.properties' (crypto-policies usage disabled file)
+#      Empty file, applied when the boolean switch is passed as false.
+#
+#   'crypto-policies.true.properties' (crypto-policies usage enabled file)
+#      Performs the crypto-policies and FIPS setup, applied when the boolean
+#      switch is passed as true.
+#
+#   'crypto-policies..properties' (crypto-policies usage default file)
+#      Determines the default choice by including one of the previous files,
+#      applied when the boolean switch is not passed.
+#
+#      Portable builds disable the system crypto-policies by default:
+#         include crypto-policies.false.properties
+#
+#      Regular RPM builds enable the system crypto-policies by default:
+#         include crypto-policies.true.properties
+#
+# To enable or disable the usage of the crypto-policies on a per-deployment
+# basis, edit the crypto-policies usage default file, changing the included
+# file. For example, execute the following command to persistently disable
+# the crypto-policies:
+#   sed -i s/true/false/ $JAVA_HOME/conf/security/crypto-policies..properties
+# Applications can still override this on a per-run basis, for example by
+# passing -Djdk.security.useSystemCryptoPolicies=true.
+#
+# To disable the jdk.security.useSystemCryptoPolicies boolean switch,
+# modify the following include directive as follows. Directly include
+# crypto-policies.true.properties to force-apply the system crypto-policies.
+# Remove or comment out the include directive to force-disable the setup.
+#
+include crypto-policies.${jdk.security.useSystemCryptoPolicies}.properties
+#       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# WARNING: anything placed after this include directive will apply on top
+# of the described setup. Adding properties below this section is strongly
+# discouraged, as it poses a risk of overriding the system crypto-policies
+# or invalidating the FIPS deployment.
