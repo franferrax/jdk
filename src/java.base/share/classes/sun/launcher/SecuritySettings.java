@@ -135,7 +135,28 @@ public final class SecuritySettings {
             for (String s : ssls.getEnabledCipherSuites()) {
                 ostream.println(THREEINDENT + s);
             }
+
+            ostream.println("\n" + TWOINDENT + "Enabled Named Groups:");
+            String [] groups = ssls.getSSLParameters().getNamedGroups();
+            if (groups == null) {
+                ostream.println(THREEINDENT + "<none>");
+            } else {
+                for (String s : groups) {
+                    ostream.println(THREEINDENT + s);
+                }
+            }
+
+            ostream.println("\n" + TWOINDENT + "Enabled Signature Schemes:");
+            String[] schemes = ssls.getSSLParameters().getSignatureSchemes();
+            if (schemes == null) {
+                ostream.println(THREEINDENT + "<none>");
+            } else {
+                for (String s : schemes) {
+                    ostream.println(THREEINDENT + s);
+                }
+            }
         }
+
         ostream.println();
     }
 

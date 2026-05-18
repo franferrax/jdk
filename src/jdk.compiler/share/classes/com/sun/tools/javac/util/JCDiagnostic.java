@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -38,7 +38,6 @@ import javax.tools.JavaFileObject;
 import com.sun.tools.javac.api.DiagnosticFormatter;
 import com.sun.tools.javac.code.Lint.LintCategory;
 import com.sun.tools.javac.code.Type;
-import com.sun.tools.javac.tree.EndPosTable;
 import com.sun.tools.javac.tree.JCTree;
 import com.sun.tools.javac.util.DefinedBy.Api;
 
@@ -117,33 +116,6 @@ public class JCDiagnostic implements Diagnostic<JavaFileObject> {
         }
 
         /**
-         * Create a warning diagnostic that will not be hidden by the -nowarn or -Xlint:none options.
-         *  @param lc     The lint category for the diagnostic
-         *  @param source The source of the compilation unit, if any, in which to report the warning.
-         *  @param pos    The source position at which to report the warning.
-         *  @param key    The key for the localized warning message.
-         *  @param args   Fields of the warning message.
-         *  @see MandatoryWarningHandler
-         */
-        public JCDiagnostic mandatoryWarning(
-                LintCategory lc,
-                DiagnosticSource source, DiagnosticPosition pos, String key, Object... args) {
-            return mandatoryWarning(source, pos, warningKey(lc, key, args));
-        }
-
-        /**
-         * Create a warning diagnostic that will not be hidden by the -nowarn or -Xlint:none options.
-         *  @param source The source of the compilation unit, if any, in which to report the warning.
-         *  @param pos    The source position at which to report the warning.
-         *  @param warningKey    The key for the localized warning message.
-         *  @see MandatoryWarningHandler
-         */
-        public JCDiagnostic mandatoryWarning(
-                DiagnosticSource source, DiagnosticPosition pos, Warning warningKey) {
-            return create(EnumSet.of(DiagnosticFlag.MANDATORY), source, pos, warningKey);
-        }
-
-        /**
          * Create a warning diagnostic.
          *  @param lc     The lint category for the diagnostic
          *  @param source The source of the compilation unit, if any, in which to report the warning.
@@ -154,39 +126,20 @@ public class JCDiagnostic implements Diagnostic<JavaFileObject> {
          */
         public JCDiagnostic warning(
                 LintCategory lc, DiagnosticSource source, DiagnosticPosition pos, String key, Object... args) {
-            return warning(source, pos, warningKey(lc, key, args));
+            return warning(null, source, pos, warningKey(lc, key, args));
         }
 
         /**
          * Create a warning diagnostic.
+         *  @param flag   A flag to add to the diagnostic.
          *  @param source The source of the compilation unit, if any, in which to report the warning.
          *  @param pos    The source position at which to report the warning.
          *  @param warningKey    The key for the localized warning message.
          *  @see MandatoryWarningHandler
          */
         public JCDiagnostic warning(
-                DiagnosticSource source, DiagnosticPosition pos, Warning warningKey) {
-            return create(EnumSet.noneOf(DiagnosticFlag.class), source, pos, warningKey);
-        }
-
-        /**
-         * Create a note diagnostic that will not be hidden by the -nowarn or -Xlint:none options.
-         *  @param source The source of the compilation unit, if any, in which to report the warning.
-         *  @param key    The key for the localized warning message.
-         *  @param args   Fields of the warning message.
-         *  @see MandatoryWarningHandler
-         */
-        public JCDiagnostic mandatoryNote(DiagnosticSource source, String key, Object... args) {
-            return mandatoryNote(source, noteKey(key, args));
-        }
-
-        /**
-         * Create a note diagnostic that will not be hidden by the -nowarn or -Xlint:none options.
-         *  @param noteKey    The key for the localized note message.
-         *  @see MandatoryWarningHandler
-         */
-        public JCDiagnostic mandatoryNote(DiagnosticSource source, Note noteKey) {
-            return create(EnumSet.of(DiagnosticFlag.MANDATORY), source, null, noteKey);
+                DiagnosticFlag flag, DiagnosticSource source, DiagnosticPosition pos, Warning warningKey) {
+            return create(flag != null ? EnumSet.of(flag) : EnumSet.noneOf(DiagnosticFlag.class), source, pos, warningKey);
         }
 
         /**
@@ -196,18 +149,19 @@ public class JCDiagnostic implements Diagnostic<JavaFileObject> {
          */
         public JCDiagnostic note(
                 DiagnosticSource source, DiagnosticPosition pos, String key, Object... args) {
-            return note(source, pos, noteKey(key, args));
+            return note(null, source, pos, noteKey(key, args));
         }
 
         /**
          * Create a note diagnostic.
+         *  @param flag   A flag to add to the diagnostic.
          *  @param source The source of the compilation unit, if any, in which to report the note.
          *  @param pos    The source position at which to report the note.
          *  @param noteKey    The key for the localized note message.
          */
         public JCDiagnostic note(
-                DiagnosticSource source, DiagnosticPosition pos, Note noteKey) {
-            return create(EnumSet.noneOf(DiagnosticFlag.class), source, pos, noteKey);
+                DiagnosticFlag flag, DiagnosticSource source, DiagnosticPosition pos, Note noteKey) {
+            return create(flag != null ? EnumSet.of(flag) : EnumSet.noneOf(DiagnosticFlag.class), source, pos, noteKey);
         }
 
         /**
@@ -409,10 +363,38 @@ public class JCDiagnostic implements Diagnostic<JavaFileObject> {
         /** Get the position within the file that most accurately defines the
          *  location for the diagnostic. */
         int getPreferredPosition();
-        /** If there is a tree node, and if endPositions are available, get
-         *  the end position of the tree node. Otherwise, just returns the
-         *  same as getPreferredPosition(). */
-        int getEndPosition(EndPosTable endPosTable);
+        /** If there is a tree node, get the end position of the tree node. */
+        int getEndPosition();
+        /** Get the position that determines which Lint configuration applies. */
+        default int getLintPosition() {
+            return getStartPosition();
+        }
+        /** Create a new instance from this instance and the given lint position. */
+        default DiagnosticPosition withLintPosition(int lintPos) {
+            DiagnosticPosition orig = this;
+            return new DiagnosticPosition() {
+                @Override
+                public JCTree getTree() {
+                    return orig.getTree();
+                }
+                @Override
+                public int getStartPosition() {
+                    return orig.getStartPosition();
+                }
+                @Override
+                public int getPreferredPosition() {
+                    return orig.getPreferredPosition();
+                }
+                @Override
+                public int getEndPosition() {
+                    return orig.getEndPosition();
+                }
+                @Override
+                public int getLintPosition() {
+                    return lintPos;
+                }
+            };
+        }
     }
 
     /**
@@ -436,7 +418,7 @@ public class JCDiagnostic implements Diagnostic<JavaFileObject> {
             return pos;
         }
 
-        public int getEndPosition(EndPosTable endPosTable) {
+        public int getEndPosition() {
             return pos;
         }
 
@@ -450,6 +432,14 @@ public class JCDiagnostic implements Diagnostic<JavaFileObject> {
         RECOVERABLE,
         NON_DEFERRABLE,
         COMPRESSED,
+        /** Flag for lint diagnostics that should be emitted even when their category
+         *  is not explicitly enabled, as long as it is not explicitly suppressed.
+         */
+        DEFAULT_ENABLED,
+        /** Flag for warnings that are automatically suppressed when they occur inside
+         *  a declaration that is itself annotated as @Deprecated. See JLS 9.6.4.6.
+         */
+        DEPRECATION_SENSITIVE,
         /** Flags mandatory warnings that should pass through a mandatory warning aggregator.
          */
         AGGREGATE,
@@ -458,7 +448,9 @@ public class JCDiagnostic implements Diagnostic<JavaFileObject> {
         API,
         /** Flag for not-supported-in-source-X errors.
          */
-        SOURCE_LEVEL;
+        SOURCE_LEVEL,
+        /** Flag for warnings that cannot be disabled */
+        STRICT;
     }
 
     private final DiagnosticSource source;
@@ -756,7 +748,7 @@ public class JCDiagnostic implements Diagnostic<JavaFileObject> {
     }
 
     protected int getIntEndPosition() {
-        return (position == null ? Position.NOPOS : position.getEndPosition(source.getEndPosTable()));
+        return (position == null ? Position.NOPOS : position.getEndPosition());
     }
 
     @DefinedBy(Api.COMPILER)

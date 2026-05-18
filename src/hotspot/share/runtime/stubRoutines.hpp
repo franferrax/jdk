@@ -33,6 +33,7 @@
 #include "runtime/stubCodeGenerator.hpp"
 #include "runtime/stubInfo.hpp"
 #include "runtime/threadWXSetters.inline.hpp"
+#include "utilities/growableArray.hpp"
 #include "utilities/macros.hpp"
 
 // StubRoutines provides entry points to assembly routines used by
@@ -111,6 +112,8 @@ class UnsafeMemoryAccess : public CHeapObj<mtCode> {
   address _end_pc;
   address _error_exit_pc;
  public:
+  // each table entry requires 3 addresses
+  static const int COLUMN_COUNT = 3;
   static address           _common_exit_stub_pc;
   static UnsafeMemoryAccess* _table;
   static int               _table_length;
@@ -129,6 +132,7 @@ class UnsafeMemoryAccess : public CHeapObj<mtCode> {
   static UnsafeMemoryAccess* add_to_table(address start_pc, address end_pc, address error_exit_pc) {
     guarantee(_table_length < _table_max_length, "Incorrect UnsafeMemoryAccess::_table_max_length");
     UnsafeMemoryAccess* entry = &_table[_table_length];
+    assert(start_pc != nullptr, "invalid start address");
     entry->set_start_pc(start_pc);
     entry->set_end_pc(end_pc);
     entry->set_error_exit_pc(error_exit_pc);
@@ -140,6 +144,10 @@ class UnsafeMemoryAccess : public CHeapObj<mtCode> {
   static bool    contains_pc(address pc);
   static address page_error_continue_pc(address pc);
   static void    create_table(int max_size);
+  // Append to entries arrray start, end and exit pcs of all table
+  // entries that identify a sub-interval of range (range_start,
+  // range_end). Append nullptr if the exit pc is not in the range.
+  static void collect_entries(address range_start, address range_end, GrowableArray<address>& entries);
 };
 
 class UnsafeMemoryAccessMark : public StackObj {
@@ -278,6 +286,11 @@ public:
   static BlobId stub_to_blob(StubId id);
 #endif
 
+#if INCLUDE_CDS
+  // AOT Initalization -- implementation is arch-specific
+  static void    init_AOTAddressTable();
+#endif // INCLUDE_CDS
+
   // Debugging
   static jint    verify_oop_count()                        { return _verify_oop_count; }
   static jint*   verify_oop_count_addr()                   { return &_verify_oop_count; }
@@ -303,6 +316,12 @@ public:
   static address arrayof_oop_disjoint_arraycopy(bool dest_uninitialized = false) {
     return dest_uninitialized ? _arrayof_oop_disjoint_arraycopy_uninit : _arrayof_oop_disjoint_arraycopy;
   }
+
+  // These methods is implemented in architecture-specific code.
+  // Any table that is returned must be allocated once-only in
+  // foreign memory (or C heap) rather generated in the code cache.
+  static address crc_table_addr();
+  static address crc32c_table_addr();
 
   typedef void (*DataCacheWritebackStub)(void *);
   static DataCacheWritebackStub DataCacheWriteback_stub()         { return CAST_TO_FN_PTR(DataCacheWritebackStub,  _data_cache_writeback); }

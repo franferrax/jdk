@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -133,10 +133,6 @@ public abstract class SunToolkit extends Toolkit
      */
     public static final int GRAB_EVENT_MASK = 0x80000000;
 
-    /* The key to put()/get() the PostEventQueue into/from the AppContext.
-     */
-    private static final String POST_EVENT_QUEUE_KEY = "PostEventQueue";
-
     /**
      * Number of buttons.
      * By default it's taken from the system. If system value does not
@@ -156,20 +152,17 @@ public abstract class SunToolkit extends Toolkit
      */
     public static final int MAX_BUTTONS_SUPPORTED = 20;
 
-    /**
-     * Creates and initializes EventQueue instance for the specified
-     * AppContext.
-     * Note that event queue must be created from createNewAppContext()
-     * only in order to ensure that EventQueue constructor obtains
-     * the correct AppContext.
-     * @param appContext AppContext to associate with the event queue
-     */
-    private static void initEQ(AppContext appContext) {
-        EventQueue eventQueue = new EventQueue();
-        appContext.put(AppContext.EVENT_QUEUE_KEY, eventQueue);
+    public static volatile EventQueue currentEventQueue;
+    private static volatile PostEventQueue postEventQueue;
 
-        PostEventQueue postEventQueue = new PostEventQueue(eventQueue);
-        appContext.put(POST_EVENT_QUEUE_KEY, postEventQueue);
+    /**
+     * Creates and initializes EventQueue instance.
+     */
+    private static synchronized void initEQ() {
+        if (currentEventQueue == null) {
+            currentEventQueue = new EventQueue();
+            postEventQueue = new PostEventQueue(currentEventQueue);
+        }
     }
 
     public SunToolkit() {
@@ -267,8 +260,7 @@ public abstract class SunToolkit extends Toolkit
 
     /*
      * Create a new AppContext, along with its EventQueue, for a
-     * new ThreadGroup.  Browser code, for example, would use this
-     * method to create an AppContext & EventQueue for an Applet.
+     * new ThreadGroup.
      */
     public static AppContext createNewAppContext() {
         ThreadGroup threadGroup = Thread.currentThread().getThreadGroup();
@@ -280,8 +272,7 @@ public abstract class SunToolkit extends Toolkit
         // the calls to AppContext.getAppContext() from EventQueue ctor
         // return correct values
         AppContext appContext = new AppContext(threadGroup);
-        initEQ(appContext);
-
+        initEQ();
         return appContext;
     }
 
@@ -331,16 +322,7 @@ public abstract class SunToolkit extends Toolkit
      */
     private static boolean setAppContext(Object target,
                                          AppContext context) {
-        if (target instanceof Component) {
-            AWTAccessor.getComponentAccessor().
-                setAppContext((Component)target, context);
-        } else if (target instanceof MenuComponent) {
-            AWTAccessor.getMenuComponentAccessor().
-                setAppContext((MenuComponent)target, context);
-        } else {
-            return false;
-        }
-        return true;
+        return (target instanceof Component);
     }
 
     /**
@@ -348,12 +330,9 @@ public abstract class SunToolkit extends Toolkit
      * Component or MenuComponent this returns null.
      */
     private static AppContext getAppContext(Object target) {
-        if (target instanceof Component) {
-            return AWTAccessor.getComponentAccessor().
-                       getAppContext((Component)target);
-        } else if (target instanceof MenuComponent) {
-            return AWTAccessor.getMenuComponentAccessor().
-                       getAppContext((MenuComponent)target);
+        if ((target instanceof Component) ||
+            (target instanceof MenuComponent)) {
+            return AppContext.getAppContext();
         } else {
             return null;
         }
@@ -415,6 +394,11 @@ public abstract class SunToolkit extends Toolkit
         cont.setFocusTraversalPolicy(defaultPolicy);
     }
 
+    /* This method should be removed at the same time as targetToAppContext() */
+    public static void insertTargetMapping(Object target) {
+        insertTargetMapping(target, AppContext.getAppContext());
+    }
+
     /*
      * Insert a mapping from target to AppContext, for later retrieval
      * via targetToAppContext() above.
@@ -425,6 +409,17 @@ public abstract class SunToolkit extends Toolkit
             // instead.
             appContextMap.put(target, appContext);
         }
+    }
+
+    public static void postEvent(AWTEvent event) {
+       /* Adding AppContext is temporary to help migrate away from using app contexts
+        * It is used by code which has already been subject to that migration.
+        * However until that is complete, there is a single main app context we
+        * can retrieve to use which would be the same as if the code had
+        * not been migrated.
+        * The overload which accepts the AppContext will eventually be replaced by this.
+        */
+        postEvent(AppContext.getAppContext(), event);
     }
 
     /*
@@ -457,12 +452,6 @@ public abstract class SunToolkit extends Toolkit
         // otherwise have to be modified to precisely identify
         // system-generated events.
         setSystemGenerated(event);
-        AppContext eventContext = targetToAppContext(event.getSource());
-        if (eventContext != null && !eventContext.equals(appContext)) {
-            throw new RuntimeException("Event posted on wrong app context : " + event);
-        }
-        PostEventQueue postEventQueue =
-            (PostEventQueue)appContext.get(POST_EVENT_QUEUE_KEY);
         if (postEventQueue != null) {
             postEventQueue.postEvent(event);
         }
@@ -487,18 +476,6 @@ public abstract class SunToolkit extends Toolkit
      * EventQueue yet.
      */
     public static void flushPendingEvents()  {
-        AppContext appContext = AppContext.getAppContext();
-        flushPendingEvents(appContext);
-    }
-
-    /*
-     * Flush the PostEventQueue for the right AppContext.
-     * The default flushPendingEvents only flushes the thread-local context,
-     * which is not always correct, c.f. 3746956
-     */
-    public static void flushPendingEvents(AppContext appContext) {
-        PostEventQueue postEventQueue =
-                (PostEventQueue)appContext.get(POST_EVENT_QUEUE_KEY);
         if (postEventQueue != null) {
             postEventQueue.flush();
         }
@@ -538,6 +515,10 @@ public abstract class SunToolkit extends Toolkit
     public static void executeOnEventHandlerThread(PeerEvent peerEvent) {
         postEvent(targetToAppContext(peerEvent.getSource()), peerEvent);
     }
+
+     public static void invokeLater(Runnable dispatcher) {
+         invokeLaterOnAppContext(AppContext.getAppContext(), dispatcher);
+     }
 
     /*
      * Execute a chunk of code on the Java event handler thread. The
@@ -583,20 +564,6 @@ public abstract class SunToolkit extends Toolkit
         if (eventThrowable != null) {
             throw new InvocationTargetException(eventThrowable);
         }
-    }
-
-    /*
-     * Returns true if the calling thread is the event dispatch thread
-     * contained within AppContext which associated with the given target.
-     * Use this call to ensure that a given task is being executed
-     * (or not being) on the event dispatch thread for the given target.
-     */
-    public static boolean isDispatchThreadForAppContext(Object target) {
-        AppContext appContext = targetToAppContext(target);
-        EventQueue eq = (EventQueue)appContext.get(AppContext.EVENT_QUEUE_KEY);
-
-        AWTAccessor.EventQueueAccessor accessor = AWTAccessor.getEventQueueAccessor();
-        return accessor.isDispatchThreadImpl(eq);
     }
 
     @Override
@@ -1019,15 +986,9 @@ public abstract class SunToolkit extends Toolkit
         return getSystemEventQueueImplPP();
     }
 
-    // Package private implementation
-    static EventQueue getSystemEventQueueImplPP() {
-        return getSystemEventQueueImplPP(AppContext.getAppContext());
-    }
-
-    public static EventQueue getSystemEventQueueImplPP(AppContext appContext) {
-        EventQueue theEventQueue =
-            (EventQueue)appContext.get(AppContext.EVENT_QUEUE_KEY);
-        return theEventQueue;
+    public static EventQueue getSystemEventQueueImplPP() {
+        initEQ();
+        return currentEventQueue;
     }
 
     /**
@@ -1635,9 +1596,6 @@ public abstract class SunToolkit extends Toolkit
      * But GTK currently has an additional test based on locale which is
      * not applied by Metal. So mixing GTK in a few locales with Metal
      * would mean the last one wins.
-     * This could be stored per-app context which would work
-     * for different applets, but wouldn't help for a single application
-     * using GTK and some other L&F concurrently.
      * But it is expected this will be addressed within GTK and the font
      * system so is a temporary and somewhat unlikely harmless corner case.
      */
@@ -2010,7 +1968,7 @@ public abstract class SunToolkit extends Toolkit
 
 
 /*
- * PostEventQueue is a Thread that runs in the same AppContext as the
+ * PostEventQueue is a Thread tied to the
  * Java EventQueue.  It is a queue of AWTEvents to be posted to the
  * Java EventQueue.  The toolkit Thread (AWT-Windows/AWT-Motif) posts
  * events to this queue, which then calls EventQueue.postEvent().

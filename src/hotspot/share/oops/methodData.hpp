@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2000, 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,11 +29,12 @@
 #include "interpreter/invocationCounter.hpp"
 #include "oops/metadata.hpp"
 #include "oops/method.hpp"
-#include "runtime/atomic.hpp"
+#include "runtime/atomicAccess.hpp"
 #include "runtime/deoptimization.hpp"
 #include "runtime/mutex.hpp"
 #include "utilities/align.hpp"
 #include "utilities/copy.hpp"
+#include "utilities/integerCast.hpp"
 
 class BytecodeStream;
 
@@ -181,7 +182,7 @@ public:
   }
 
   u1 flags() const {
-    return Atomic::load_acquire(&_header._struct._flags);
+    return AtomicAccess::load_acquire(&_header._struct._flags);
   }
 
   u2 bci() const {
@@ -206,7 +207,7 @@ public:
   }
 
   bool set_flag_at(u1 flag_number) {
-    const u1 bit = 1 << flag_number;
+    const u1 bit = integer_cast<u1>(1 << flag_number);
     u1 compare_value;
     do {
       compare_value = _header._struct._flags;
@@ -214,12 +215,12 @@ public:
         // already set.
         return false;
       }
-    } while (compare_value != Atomic::cmpxchg(&_header._struct._flags, compare_value, static_cast<u1>(compare_value | bit)));
+    } while (compare_value != AtomicAccess::cmpxchg(&_header._struct._flags, compare_value, static_cast<u1>(compare_value | bit)));
     return true;
   }
 
   bool clear_flag_at(u1 flag_number) {
-    const u1 bit = 1 << flag_number;
+    const u1 bit = integer_cast<u1>(1 << flag_number);
     u1 compare_value;
     u1 exchange_value;
     do {
@@ -229,7 +230,7 @@ public:
         return false;
       }
       exchange_value = compare_value & ~bit;
-    } while (compare_value != Atomic::cmpxchg(&_header._struct._flags, compare_value, exchange_value));
+    } while (compare_value != AtomicAccess::cmpxchg(&_header._struct._flags, compare_value, exchange_value));
     return true;
   }
 
@@ -1148,6 +1149,8 @@ public:
 // is seen. A per ReceiverTypeData counter is incremented on type
 // overflow (when there's no more room for a not yet profiled Klass*).
 //
+// Updated by platform-specific code, for example MacroAssembler::profile_receiver_type.
+//
 class ReceiverTypeData : public CounterData {
   friend class VMStructs;
   friend class JVMCIVMStructs;
@@ -1749,7 +1752,7 @@ public:
   virtual bool is_ArgInfoData() const { return true; }
 
 
-  int number_of_args() const {
+  int size_of_args() const {
     return array_len();
   }
 

@@ -104,10 +104,15 @@ static address generate_sha3_implCompress(StubId stub_id,
   default:
     ShouldNotReachHere();
   }
-
+  int entry_count = StubInfo::entry_count(stub_id);
+  assert(entry_count == 1, "sanity check");
+  address start = stubgen->load_archive_data(stub_id);
+  if (start != nullptr) {
+    return start;
+  }
   __ align(CodeEntryAlignment);
   StubCodeMark mark(stubgen, stub_id);
-  address start = __ pc();
+  start = __ pc();
 
   const Register buf          = c_rarg0;
   const Register state        = c_rarg1;
@@ -130,9 +135,9 @@ static address generate_sha3_implCompress(StubId stub_id,
 
   __ enter();
 
-  __ push(r12);
-  __ push(r13);
-  __ push(r14);
+  __ push_ppx(r12);
+  __ push_ppx(r13);
+  __ push_ppx(r14);
 
 #ifdef _WIN64
   // on win64, fill limit from stack position
@@ -309,12 +314,15 @@ static address generate_sha3_implCompress(StubId stub_id,
     __ evmovdquq(Address(state, i * 40), k5, xmm(i), true, Assembler::AVX_512bit);
   }
 
-  __ pop(r14);
-  __ pop(r13);
-  __ pop(r12);
+  __ pop_ppx(r14);
+  __ pop_ppx(r13);
+  __ pop_ppx(r12);
 
   __ leave(); // required for proper stackwalking of RuntimeStub frame
   __ ret(0);
+
+  // record the stub entry and end
+  stubgen->store_archive_data(stub_id, start, __ pc());
 
   return start;
 }
@@ -326,10 +334,16 @@ static address generate_sha3_implCompress(StubId stub_id,
 // Performs two keccak() computations in parallel. The steps of the
 // two computations are executed interleaved.
 static address generate_double_keccak(StubGenerator *stubgen, MacroAssembler *_masm) {
-  __ align(CodeEntryAlignment);
   StubId stub_id = StubId::stubgen_double_keccak_id;
+  int entry_count = StubInfo::entry_count(stub_id);
+  assert(entry_count == 1, "sanity check");
+  address start = stubgen->load_archive_data(stub_id);
+  if (start != nullptr) {
+    return start;
+  }
+  __ align(CodeEntryAlignment);
   StubCodeMark mark(stubgen, stub_id);
-  address start = __ pc();
+  start = __ pc();
 
   const Register state0 = c_rarg0;
   const Register state1 = c_rarg1;
@@ -495,6 +509,9 @@ static address generate_double_keccak(StubGenerator *stubgen, MacroAssembler *_m
   __ leave(); // required for proper stackwalking of RuntimeStub frame
   __ ret(0);
 
+  // record the stub entry and end
+  stubgen->store_archive_data(stub_id, start, __ pc());
+
   return start;
 }
 
@@ -508,3 +525,14 @@ void StubGenerator::generate_sha3_stubs() {
       generate_sha3_implCompress(StubId::stubgen_sha3_implCompressMB_id, this, _masm);
   }
 }
+
+#undef __
+
+#if INCLUDE_CDS
+void StubGenerator::init_AOTAddressTable_sha3(GrowableArray<address>& external_addresses) {
+#define ADD(addr) external_addresses.append((address)(addr));
+  ADD(round_constsAddr());
+  ADD(permsAndRotsAddr());
+#undef ADD
+}
+#endif // INCLUDE_CDS

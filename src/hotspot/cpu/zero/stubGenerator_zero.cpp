@@ -180,6 +180,10 @@ class StubGenerator: public StubCodeGenerator {
 
   void generate_preuniverse_stubs() {
     StubRoutines::_fence_entry               = ShouldNotCallThisStub();
+    StubRoutines::_atomic_xchg_entry         = ShouldNotCallThisStub();
+    StubRoutines::_atomic_cmpxchg_entry      = ShouldNotCallThisStub();
+    StubRoutines::_atomic_cmpxchg_long_entry = ShouldNotCallThisStub();
+    StubRoutines::_atomic_add_entry          = ShouldNotCallThisStub();
   }
 
   void generate_initial_stubs() {
@@ -192,12 +196,6 @@ class StubGenerator: public StubCodeGenerator {
     StubRoutines::_forward_exception_entry   = ShouldNotCallThisStub();
     StubRoutines::_call_stub_entry           = (address) call_stub;
     StubRoutines::_catch_exception_entry     = ShouldNotCallThisStub();
-
-    // atomic calls
-    StubRoutines::_atomic_xchg_entry         = ShouldNotCallThisStub();
-    StubRoutines::_atomic_cmpxchg_entry      = ShouldNotCallThisStub();
-    StubRoutines::_atomic_cmpxchg_long_entry = ShouldNotCallThisStub();
-    StubRoutines::_atomic_add_entry          = ShouldNotCallThisStub();
   }
 
   void generate_continuation_stubs() {
@@ -215,7 +213,7 @@ class StubGenerator: public StubCodeGenerator {
   }
 
  public:
-  StubGenerator(CodeBuffer* code, BlobId blob_id) : StubCodeGenerator(code, blob_id) {
+  StubGenerator(CodeBuffer* code, BlobId blob_id, AOTStubData *stub_data) : StubCodeGenerator(code, blob_id, stub_data) {
     switch(blob_id) {
     case BlobId::stubgen_preuniverse_id:
       generate_preuniverse_stubs();
@@ -239,8 +237,8 @@ class StubGenerator: public StubCodeGenerator {
   }
 };
 
-void StubGenerator_generate(CodeBuffer* code, BlobId blob_id) {
-  StubGenerator g(code, blob_id);
+void StubGenerator_generate(CodeBuffer* code, BlobId blob_id, AOTStubData *stub_data) {
+  StubGenerator g(code, blob_id, stub_data);
 }
 
 EntryFrame *EntryFrame::build(const intptr_t*  parameters,

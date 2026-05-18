@@ -1813,16 +1813,15 @@ public abstract class Provider extends Properties {
                         cipherTransformsAllowed.get(transformation);
             }
             if (isTransformAllowed == null) {
-                String[] transformParts = AlgorithmDecomposer
-                        .getTransformationTokens(transformation);
-                // transformParts has three non-empty components because
-                // transformation 1) was analyzed by
+                AlgorithmDecomposer.CipTrf ct =
+                        AlgorithmDecomposer.CipTrf.of(transformation);
+                // CipTrf should not have any error and contain algo, mode
+                // and pad because transformation 1) was analyzed by
                 // Cipher::tokenizeTransformation before and 2) if it
                 // had have a single component, it would have been
                 // equal to the service algorithm or alias and not set by
                 // ProvidersFilter.CipherTransformation to reach this point.
-                assert transformParts.length == 3 :
-                        "Unexpected transformation.";
+                assert !ct.algorithmOnly() : "Unexpected transformation.";
                 List<String> allAlgos =
                         new ArrayList<>(getAliases().size() + 1);
                 allAlgos.add(algorithm);
@@ -1833,10 +1832,10 @@ public abstract class Provider extends Properties {
                     // use the first one for the transformation alias. The
                     // second and third one (if any) are assumed to be the mode
                     // and padding respectively, and taken from the
-                    // transformation.
-                    algo = AlgorithmDecomposer.getTransformationTokens(algo)[0];
-                    String transformAlgo = algo + "/" + transformParts[1] +
-                            "/" + transformParts[2];
+                    // transformation. NOTE: CipTrf::algo is always present,
+                    // even if an error occurred.
+                    algo = AlgorithmDecomposer.CipTrf.of(algo).algo;
+                    String transformAlgo = algo + "/" + ct.mode + "/" + ct.pad;
                     if (!transformAlgo.equalsIgnoreCase(transformation)) {
                         tAliases.add(transformAlgo);
                     }

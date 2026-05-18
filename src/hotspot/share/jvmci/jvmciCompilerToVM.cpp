@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -56,7 +56,7 @@
 #include "prims/methodHandles.hpp"
 #include "prims/nativeLookup.hpp"
 #include "runtime/arguments.hpp"
-#include "runtime/atomic.hpp"
+#include "runtime/atomicAccess.hpp"
 #include "runtime/deoptimization.hpp"
 #include "runtime/fieldDescriptor.inline.hpp"
 #include "runtime/frame.inline.hpp"
@@ -585,7 +585,7 @@ C2V_END
 
 C2V_VMENTRY_0(jboolean, hasNeverInlineDirective,(JNIEnv* env, jobject, ARGUMENT_PAIR(method)))
   methodHandle method (THREAD, UNPACK_PAIR(Method, method));
-  return !Inline || CompilerOracle::should_not_inline(method) || method->dont_inline();
+  return !Inline || CompilerOracle::should_not_inline(method, CompLevel_full_optimization) || method->dont_inline();
 C2V_END
 
 C2V_VMENTRY_0(jboolean, shouldInlineMethod,(JNIEnv* env, jobject, ARGUMENT_PAIR(method)))
@@ -1008,7 +1008,7 @@ C2V_VMENTRY_NULL(jobject, resolveFieldInPool, (JNIEnv* env, jobject, ARGUMENT_PA
   }
 
   LinkInfo link_info(cp, index, mh, code, CHECK_NULL);
-  LinkResolver::resolve_field(fd, link_info, Bytecodes::java_code(code), false, CHECK_NULL);
+  LinkResolver::resolve_field(fd, link_info, Bytecodes::java_code(code), ClassInitMode::dont_init, CHECK_NULL);
   JVMCIPrimitiveArray info = JVMCIENV->wrap(info_handle);
   if (info.is_null() || JVMCIENV->get_length(info) != 4) {
     JVMCI_ERROR_NULL("info must not be null and have a length of 4");
@@ -1218,7 +1218,7 @@ C2V_VMENTRY_0(jint, installCode0, (JNIEnv *env, jobject,
   return result;
 C2V_END
 
-C2V_VMENTRY_0(jobject, getInvalidationReasonDescription, (JNIEnv *env, jobject, jint invalidation_reason))
+C2V_VMENTRY_NULL(jobject, getInvalidationReasonDescription, (JNIEnv *env, jobject, jint invalidation_reason))
   HandleMark hm(THREAD);
   JNIHandleMark jni_hm(thread);
   nmethod::InvalidationReason reason = static_cast<nmethod::InvalidationReason>(invalidation_reason);
@@ -2012,7 +2012,7 @@ C2V_VMENTRY_NULL(jobject, getInterfaces, (JNIEnv* env, jobject, ARGUMENT_PAIR(kl
   JVMCIObjectArray interfaces = JVMCIENV->new_HotSpotResolvedObjectTypeImpl_array(size, JVMCI_CHECK_NULL);
   for (int index = 0; index < size; index++) {
     JVMCIKlassHandle klass(THREAD);
-    Klass* k = iklass->local_interfaces()->at(index);
+    InstanceKlass* k = iklass->local_interfaces()->at(index);
     klass = k;
     JVMCIObject type = JVMCIENV->get_jvmci_type(klass, JVMCI_CHECK_NULL);
     JVMCIENV->put_object_at(interfaces, index, type);
@@ -2277,7 +2277,7 @@ C2V_VMENTRY_NULL(jobjectArray, getDeclaredFieldsInfo, (JNIEnv* env, jobject, ARG
   InstanceKlass* iklass = InstanceKlass::cast(klass);
   int java_fields, injected_fields;
   GrowableArray<FieldInfo>* fields = FieldInfoStream::create_FieldInfoArray(iklass->fieldinfo_stream(), &java_fields, &injected_fields);
-  JVMCIObjectArray array = JVMCIENV->new_FieldInfo_array(fields->length(), JVMCIENV);
+  JVMCIObjectArray array = JVMCIENV->new_FieldInfo_array(fields->length(), JVMCI_CHECK_NULL);
   for (int i = 0; i < fields->length(); i++) {
     JVMCIObject field_info = JVMCIENV->new_FieldInfo(fields->adr_at(i), JVMCI_CHECK_NULL);
     JVMCIENV->put_object_at(array, i, field_info);
@@ -2984,13 +2984,21 @@ C2V_VMENTRY_NULL(jobject, asReflectionExecutable, (JNIEnv* env, jobject, ARGUMEN
   return JNIHandles::make_local(THREAD, executable);
 C2V_END
 
+// Checks that `index` denotes a non-injected field in `klass`
 static InstanceKlass* check_field(Klass* klass, jint index, JVMCI_TRAPS) {
   if (!klass->is_instance_klass()) {
     JVMCI_THROW_MSG_NULL(IllegalArgumentException,
         err_msg("Expected non-primitive type, got %s", klass->external_name()));
   }
   InstanceKlass* iklass = InstanceKlass::cast(klass);
-  if (index < 0 || index > iklass->total_fields_count()) {
+  if (index < 0 || index >= iklass->java_fields_count()) {
+    if (index >= 0 && index < iklass->total_fields_count()) {
+      fieldDescriptor fd(iklass, index);
+      if (fd.is_injected()) {
+        JVMCI_THROW_MSG_NULL(IllegalArgumentException,
+            err_msg("Cannot get Field for injected %s.%s", klass->external_name(), fd.name()->as_C_string()));
+      }
+    }
     JVMCI_THROW_MSG_NULL(IllegalArgumentException,
         err_msg("Field index %d out of bounds for %s", index, klass->external_name()));
   }
@@ -3000,7 +3008,7 @@ static InstanceKlass* check_field(Klass* klass, jint index, JVMCI_TRAPS) {
 C2V_VMENTRY_NULL(jobject, asReflectionField, (JNIEnv* env, jobject, ARGUMENT_PAIR(klass), jint index))
   requireInHotSpot("asReflectionField", JVMCI_CHECK_NULL);
   Klass* klass = UNPACK_PAIR(Klass, klass);
-  InstanceKlass* iklass = check_field(klass, index, JVMCIENV);
+  InstanceKlass* iklass = check_field(klass, index, JVMCI_CHECK_NULL);
   fieldDescriptor fd(iklass, index);
   oop reflected = Reflection::new_field(&fd, CHECK_NULL);
   return JNIHandles::make_local(THREAD, reflected);
@@ -3008,7 +3016,7 @@ C2V_END
 
 static jbyteArray get_encoded_annotation_data(InstanceKlass* holder, AnnotationArray* annotations_array, bool for_class,
                                               jint filter_length, jlong filter_klass_pointers,
-                                              JavaThread* THREAD, JVMCIEnv* JVMCIENV) {
+                                              JavaThread* THREAD, JVMCI_TRAPS) {
   // Get a ConstantPool object for annotation parsing
   Handle jcp = reflect_ConstantPool::create(CHECK_NULL);
   reflect_ConstantPool::set_cp(jcp(), holder->constants());
@@ -3086,7 +3094,7 @@ C2V_END
 C2V_VMENTRY_NULL(jbyteArray, getEncodedFieldAnnotationData, (JNIEnv* env, jobject, ARGUMENT_PAIR(klass), jint index,
                  jobject filter, jint filter_length, jlong filter_klass_pointers))
   CompilerThreadCanCallJava canCallJava(thread, true); // Requires Java support
-  InstanceKlass* holder = check_field(InstanceKlass::cast(UNPACK_PAIR(Klass, klass)), index, JVMCIENV);
+  InstanceKlass* holder = check_field(InstanceKlass::cast(UNPACK_PAIR(Klass, klass)), index, JVMCI_CHECK_NULL);
   fieldDescriptor fd(holder, index);
   return get_encoded_annotation_data(holder, fd.annotations(), false, filter_length, filter_klass_pointers, THREAD, JVMCIENV);
 C2V_END
