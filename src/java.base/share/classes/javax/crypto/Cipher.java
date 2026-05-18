@@ -44,6 +44,7 @@ import java.nio.ReadOnlyBufferException;
 
 import sun.security.util.Debug;
 import sun.security.jca.*;
+import sun.security.util.AlgorithmDecomposer;
 import sun.security.util.KnownOIDs;
 import sun.security.util.CryptoAlgorithmConstraints;
 
@@ -286,79 +287,16 @@ public class Cipher {
         this.lock = new Object();
     }
 
-    // for special handling SHA-512/224, SHA-512/256, SHA512/224, SHA512/256
-    static int indexOfRealSlash(String s, int fromIndex) {
-        while (true) {
-            int pos = s.indexOf('/', fromIndex);
-            // 512/2
-            if (pos > 3 && pos + 1 < s.length()
-                    && s.charAt(pos - 3) == '5'
-                    && s.charAt(pos - 2) == '1'
-                    && s.charAt(pos - 1) == '2'
-                    && s.charAt(pos + 1) == '2') {
-                fromIndex = pos + 1;
-                // see 512/2, find next
-            } else {
-                return pos;
-            }
-        }
-    }
-
-    static String reqNonEmpty(String in, String msg)
-            throws NoSuchAlgorithmException {
-        in = in.trim();
-        if (in.isEmpty()) {
-            throw new NoSuchAlgorithmException(msg);
-        }
-        return in;
-    }
-
     // Parse the specified cipher transformation for algorithm and the
     // optional mode and padding. If the transformation contains only
     // algorithm, then only algorithm is returned. Otherwise, the
     // transformation must contain all 3 and they must be non-empty.
-    private static String[] tokenizeTransformation(String transformation)
-            throws NoSuchAlgorithmException {
+    private static AlgorithmDecomposer.CipTrf tokenizeTransformation(
+            String transformation) throws NoSuchAlgorithmException {
         if (transformation == null) {
             throw new NoSuchAlgorithmException("No transformation given");
         }
-
-        /*
-         * Components of a cipher transformation:
-         *
-         * 1) algorithm component (e.g., AES)
-         * 2) feedback component (e.g., CFB) - optional
-         * 3) padding component (e.g., PKCS5Padding) - optional
-         */
-        int endIdx = indexOfRealSlash(transformation, 0);
-        if (endIdx == -1) { // algo only, done
-            return new String[] { reqNonEmpty(transformation,
-                        "Invalid transformation: algorithm not specified")
-            };
-        }
-        // must be algo/mode/padding
-        String algo = reqNonEmpty(transformation.substring(0, endIdx),
-                    "Invalid transformation: algorithm not specified");
-
-        int startIdx = endIdx + 1;
-        endIdx = indexOfRealSlash(transformation, startIdx);
-        if (endIdx == -1) {
-            throw new NoSuchAlgorithmException(
-                    "Invalid transformation format: " + transformation);
-        }
-        String mode = reqNonEmpty(transformation.substring(startIdx,
-                endIdx), "Invalid transformation: missing mode");
-
-        startIdx = endIdx + 1;
-        endIdx = indexOfRealSlash(transformation, startIdx);
-        if (endIdx == -1) {
-            return new String[] { algo, mode,
-                    reqNonEmpty(transformation.substring(startIdx),
-                            "Invalid transformation: missing padding") };
-        } else {
-            throw new NoSuchAlgorithmException(
-                    "Invalid transformation format: " + transformation);
-        }
+        return AlgorithmDecomposer.CipTrf.of(transformation).check();
     }
 
     // Provider attribute name for supported chaining mode
@@ -452,19 +390,17 @@ public class Cipher {
 
     private static List<Transform> getTransforms(String transformation)
             throws NoSuchAlgorithmException {
-        String[] parts = tokenizeTransformation(transformation);
-
-        if (parts.length == 1) {
-            // Algorithm only
-            return List.of(new Transform(parts[0], "", null, null));
+        AlgorithmDecomposer.CipTrf ct = tokenizeTransformation(transformation);
+        if (ct.algorithmOnly()) {
+            return List.of(new Transform(ct.algo, "", null, null));
         } else {
             // Algorithm w/ both mode and padding
             return List.of(
-                    new Transform(parts[0], "/" + parts[1] + "/" + parts[2],
-                    null, null),
-                    new Transform(parts[0], "/" + parts[1], null, parts[2]),
-                    new Transform(parts[0], "//" + parts[2], parts[1], null),
-                    new Transform(parts[0], "", parts[1], parts[2]));
+                    new Transform(ct.algo, "/" + ct.mode + "/" + ct.pad, null,
+                            null),
+                    new Transform(ct.algo, "/" + ct.mode, null, ct.pad),
+                    new Transform(ct.algo, "//" + ct.pad, ct.mode, null),
+                    new Transform(ct.algo, "", ct.mode, ct.pad));
         }
     }
 
@@ -478,6 +414,30 @@ public class Cipher {
             }
         }
         return null;
+    }
+
+    private static Service tryGetService(Provider p, String canonicalTransform,
+            String svcSearchKey) {
+        ProvidersFilter.CipherTransformation ct =
+                new ProvidersFilter.CipherTransformation(
+                        canonicalTransform, svcSearchKey);
+        try (ct) {
+            Service s = p.getService("Cipher", svcSearchKey);
+            if (s == null || !ProvidersFilter.isAllowed(s)) {
+                return null;
+            }
+            return s;
+        }
+    }
+
+    private static Object newInstance(Service s, String canonicalTransform,
+            String svcSearchKey) throws NoSuchAlgorithmException {
+        ProvidersFilter.CipherTransformation ct =
+                new ProvidersFilter.CipherTransformation(
+                        canonicalTransform, svcSearchKey);
+        try (ct) {
+            return s.newInstance(null);
+        }
     }
 
     /**
@@ -518,6 +478,13 @@ public class Cipher {
      * {@systemProperty jdk.crypto.disabledAlgorithms} is set, it supersedes
      * the security property value.
      * </li>
+     * <li>the {@code jdk.security.providers.filter}
+     * {@link System#getProperty(String) System} and
+     * {@link Security#getProperty(String) Security} properties to determine
+     * which {@linkplain java.security.Provider.Service services} are enabled.
+     * A service that is not enabled by the filter will not make its
+     * transformation implementation available.
+     * </li>
      * </ul>
      *
      * @param transformation the name of the transformation, e.g.,
@@ -555,17 +522,18 @@ public class Cipher {
         }
 
         List<Transform> transforms = getTransforms(transformation);
+        String canonicalTransform = transforms.getFirst().transform;
         List<ServiceId> cipherServices = new ArrayList<>(transforms.size());
         for (Transform transform : transforms) {
             cipherServices.add(new ServiceId("Cipher", transform.transform));
         }
         // make sure there is at least one service from a signed provider
         // and that it can use the specified mode and padding
-        Iterator<Service> t = GetInstance.getServices(cipherServices);
+        Iterator<Service> t = GetInstance.getCipherServices(cipherServices);
         Exception failure = null;
         while (t.hasNext()) {
             Service s = t.next();
-            if (JceSecurity.canUseProvider(s.getProvider()) == false) {
+            if (!JceSecurity.canUseProvider(s.getProvider())) {
                 continue;
             }
             Transform tr = getTransform(s, transforms);
@@ -582,7 +550,8 @@ public class Cipher {
             // even when mode and padding are both supported, they
             // may not be used together, try out and see if it works
             try {
-                CipherSpi spi = (CipherSpi)s.newInstance(null);
+                CipherSpi spi = (CipherSpi)newInstance(s, canonicalTransform,
+                        tr.transform);
                 tr.setModePadding(spi);
                 // specify null instead of spi for delayed provider selection
                 return new Cipher(null, s, t, transformation, transforms);
@@ -617,6 +586,14 @@ public class Cipher {
      * requirements of your application.
      *
      * @implNote
+     * The JDK Reference Implementation additionally uses the
+     * {@code jdk.security.providers.filter}
+     * {@link System#getProperty(String) System} and
+     * {@link Security#getProperty(String) Security} properties to determine
+     * which {@linkplain java.security.Provider.Service services} are enabled.
+     * A service that is not enabled by the filter will not make its
+     * transformation implementation available.
+     * <p>
      * See the Cipher Transformations section of the {@extLink
      * security_guide_jdk_providers JDK Providers} document for information
      * on the transformation defaults used by JDK providers.
@@ -699,6 +676,14 @@ public class Cipher {
      * requirements of your application.
      *
      * @implNote
+     * The JDK Reference Implementation additionally uses the
+     * {@code jdk.security.providers.filter}
+     * {@link System#getProperty(String) System} and
+     * {@link Security#getProperty(String) Security} properties to determine
+     * which {@linkplain java.security.Provider.Service services} are enabled.
+     * A service that is not enabled by the filter will not make its
+     * transformation implementation available.
+     * <p>
      * See the Cipher Transformations section of the {@extLink
      * security_guide_jdk_providers JDK Providers} document for information
      * on the transformation defaults used by JDK providers.
@@ -758,22 +743,24 @@ public class Cipher {
 
         Exception failure = null;
         List<Transform> transforms = getTransforms(transformation);
+        String canonicalTransform = transforms.getFirst().transform;
         boolean providerChecked = false;
         String paddingError = null;
         for (Transform tr : transforms) {
-            Service s = provider.getService("Cipher", tr.transform);
+            Service s = tryGetService(provider, canonicalTransform,
+                    tr.transform);
             if (s == null) {
                 continue;
             }
-            if (providerChecked == false) {
+            if (!providerChecked) {
                 // for compatibility, first do the lookup and then verify
                 // the provider. this makes the difference between a NSAE
-                // and a SecurityException if the
-                // provider does not support the algorithm.
+                // and a SecurityException if the provider does not support
+                // the algorithm.
                 Exception ve = JceSecurity.getVerificationResult(provider);
                 if (ve != null) {
                     String msg = "JCE cannot authenticate the provider "
-                        + provider.getName();
+                            + provider.getName();
                     throw new SecurityException(msg, ve);
                 }
                 providerChecked = true;
@@ -786,7 +773,8 @@ public class Cipher {
                 continue;
             }
             try {
-                CipherSpi spi = (CipherSpi)s.newInstance(null);
+                CipherSpi spi = (CipherSpi)newInstance(s, canonicalTransform,
+                        tr.transform);
                 tr.setModePadding(spi);
                 Cipher cipher = new Cipher(spi, transformation);
                 cipher.provider = s.getProvider();
@@ -853,6 +841,7 @@ public class Cipher {
                     new Exception("Call trace").printStackTrace();
                 }
             }
+            String canonicalTransform = transforms.getFirst().transform;
             Exception lastException = null;
             while ((firstService != null) || serviceIterator.hasNext()) {
                 Service s;
@@ -866,7 +855,7 @@ public class Cipher {
                     s = serviceIterator.next();
                     thisSpi = null;
                 }
-                if (JceSecurity.canUseProvider(s.getProvider()) == false) {
+                if (!JceSecurity.canUseProvider(s.getProvider())) {
                     continue;
                 }
                 Transform tr = getTransform(s, transforms);
@@ -879,7 +868,8 @@ public class Cipher {
                 }
                 try {
                     if (thisSpi == null) {
-                        Object obj = s.newInstance(null);
+                        Object obj = newInstance(s, canonicalTransform,
+                                tr.transform);
                         if (obj instanceof CipherSpi == false) {
                             continue;
                         }
@@ -947,6 +937,7 @@ public class Cipher {
                 implInit(spi, initType, opmode, key, paramSpec, params, random);
                 return;
             }
+            String canonicalTransform = transforms.getFirst().transform;
             Exception lastException = null;
             while ((firstService != null) || serviceIterator.hasNext()) {
                 Service s;
@@ -961,10 +952,10 @@ public class Cipher {
                     thisSpi = null;
                 }
                 // if provider says it does not support this key, ignore it
-                if (s.supportsParameter(key) == false) {
+                if (!s.supportsParameter(key)) {
                     continue;
                 }
-                if (JceSecurity.canUseProvider(s.getProvider()) == false) {
+                if (!JceSecurity.canUseProvider(s.getProvider())) {
                     continue;
                 }
                 Transform tr = getTransform(s, transforms);
@@ -977,7 +968,8 @@ public class Cipher {
                 }
                 try {
                     if (thisSpi == null) {
-                        thisSpi = (CipherSpi)s.newInstance(null);
+                        thisSpi = (CipherSpi)newInstance(s, canonicalTransform,
+                                tr.transform);
                     }
                     tr.setModePadding(thisSpi);
                     initCryptoPermission();
@@ -2662,8 +2654,8 @@ public class Cipher {
             String transformation) throws NullPointerException,
             NoSuchAlgorithmException {
         if (transformation == null) throw new NullPointerException();
-        String[] parts = tokenizeTransformation(transformation);
-        return JceSecurityManager.INSTANCE.getCryptoPermission(parts[0]);
+        String algo = tokenizeTransformation(transformation).algo;
+        return JceSecurityManager.INSTANCE.getCryptoPermission(algo);
     }
 
     /**

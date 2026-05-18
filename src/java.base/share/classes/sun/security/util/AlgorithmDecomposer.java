@@ -25,6 +25,7 @@
 
 package sun.security.util;
 
+import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.regex.Pattern;
 
@@ -170,5 +171,136 @@ public class AlgorithmDecomposer {
      */
     static String decomposeDigestName(String algorithm) {
         return DECOMPOSED_DIGEST_NAMES.getOrDefault(algorithm, algorithm);
+    }
+
+    /**
+     * Resulting representation after splitting a {@code Cipher} transformation
+     * of the form {@code algorithm} or {@code algorithm/mode/padding} into its
+     * components.
+     * <p>
+     * Any parsing error message can be latter thrown as a
+     * {@code NoSuchAlgorithmException} by invoking {@code CipTrf::check}.
+     * {@code CipTrf::algo} is always present, even if an error occurred.
+     */
+    static public class CipTrf {
+        public final String algo;
+        public final String mode;
+        public final String pad;
+        private final NoSuchAlgorithmException error;
+
+        private CipTrf(String algo, String mode, String pad,
+                NoSuchAlgorithmException error) {
+            assert algo != null;
+            this.algo = algo;
+            this.mode = mode;
+            this.pad = pad;
+            this.error = error;
+        }
+
+        /**
+         * Parses the specified cipher transformation for algorithm and the
+         * optional mode and padding. If the transformation contains only
+         * algorithm, then only algorithm is returned. Otherwise, the
+         * transformation must contain all 3 and they must be non-empty.
+         * <p>
+         * Components of a cipher transformation:
+         * <ol>
+         * <li>algorithm component (e.g., AES)</li>
+         * <li>feedback component (e.g., CFB) - optional</li/>
+         * <li>padding component (e.g., PKCS5Padding) - optional</li>
+         * </ol>
+         * @param transformation the cipher transformation to parse
+         * @return the tokenized transformation as a {@code CipTrf}
+         * instance, which can also indicate errors with {@code CipTrf::check}
+         */
+        public static CipTrf of(String transformation) {
+            NoSuchAlgorithmException error;
+            int endIdx = indexOfRealSlash(transformation, 0);
+            if (endIdx == -1) { // algo only, done
+                String algo = transformation.trim();
+                if (algo.isEmpty()) {
+                    error = new NoSuchAlgorithmException(
+                            "Invalid transformation: algorithm not specified");
+                    return new CipTrf(algo, null, null, error);
+                }
+                return new CipTrf(algo, null, null, null);
+            }
+
+            // must be algo/mode/padding
+            String algo = transformation.substring(0, endIdx).trim();
+            if (algo.isEmpty()) {
+                error = new NoSuchAlgorithmException(
+                        "Invalid transformation: algorithm not specified");
+                return new CipTrf(algo, null, null, error);
+            }
+
+            int startIdx = endIdx + 1;
+            endIdx = indexOfRealSlash(transformation, startIdx);
+            if (endIdx == -1) {
+                error = new NoSuchAlgorithmException(
+                        "Invalid transformation format: " + transformation);
+                return new CipTrf(algo, null, null, error);
+            }
+            String mode = transformation.substring(startIdx, endIdx).trim();
+            if (mode.isEmpty()) {
+                error = new NoSuchAlgorithmException(
+                        "Invalid transformation: missing mode");
+                return new CipTrf(algo, mode, null, error);
+            }
+
+            startIdx = endIdx + 1;
+            endIdx = indexOfRealSlash(transformation, startIdx);
+            if (endIdx == -1) {
+                String pad = transformation.substring(startIdx).trim();
+                if (pad.isEmpty()) {
+                    error = new NoSuchAlgorithmException(
+                            "Invalid transformation: missing padding");
+                    return new CipTrf(algo, mode, pad, error);
+                }
+                return new CipTrf(algo, mode, pad, null);
+            } else {
+                error = new NoSuchAlgorithmException(
+                        "Invalid transformation format: " + transformation);
+                return new CipTrf(algo, mode, null, error);
+            }
+        }
+
+        // for special handling SHA-512/224, SHA-512/256, SHA512/224, SHA512/256
+        private static int indexOfRealSlash(String s, int fromIndex) {
+            while (true) {
+                int pos = s.indexOf('/', fromIndex);
+                // 512/2
+                if (pos > 3 && pos + 1 < s.length()
+                        && s.charAt(pos - 3) == '5'
+                        && s.charAt(pos - 2) == '1'
+                        && s.charAt(pos - 1) == '2'
+                        && s.charAt(pos + 1) == '2') {
+                    fromIndex = pos + 1;
+                    // see 512/2, find next
+                } else {
+                    return pos;
+                }
+            }
+        }
+
+        /**
+         * If there was a transformation validation error, throws an exception.
+         * @return this {@code CipTrf} object
+         * @throws NoSuchAlgorithmException when a validation failure occurred
+         */
+        public CipTrf check() throws NoSuchAlgorithmException {
+            if (error != null) {
+                throw error;
+            }
+            return this;
+        }
+
+        /**
+         * Determines whether the transformation is an algorithm-only one.
+         * @return {@code boolean} indicating the result
+         */
+        public boolean algorithmOnly() {
+            return mode == null || pad == null;
+        }
     }
 }

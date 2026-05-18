@@ -43,6 +43,7 @@ import java.io.FileDescriptor;
 import java.io.FilePermission;
 import java.io.ObjectInputStream;
 import java.io.RandomAccessFile;
+import java.security.Provider;
 import java.security.Signature;
 import javax.security.auth.x500.X500Principal;
 
@@ -101,6 +102,7 @@ public class SharedSecrets {
     @Stable private static JavaUtilZipFileAccess javaUtilZipFileAccess;
     @Stable private static JavaUtilResourceBundleAccess javaUtilResourceBundleAccess;
     @Stable private static JavaSecurityPropertiesAccess javaSecurityPropertiesAccess;
+    @Stable private static JavaSecurityProviderAccess javaSecurityProviderAccess;
     @Stable private static JavaSecuritySignatureAccess javaSecuritySignatureAccess;
     @Stable private static JavaSecuritySpecAccess javaSecuritySpecAccess;
     @Stable private static JavaxCryptoSealedObjectAccess javaxCryptoSealedObjectAccess;
@@ -319,6 +321,20 @@ public class SharedSecrets {
         if (access == null) {
             ensureClassInitialized(Security.class);
             access = javaSecurityPropertiesAccess;
+        }
+        return access;
+    }
+
+    public static void setJavaSecurityProviderAccess(
+            JavaSecurityProviderAccess jspa) {
+        javaSecurityProviderAccess = jspa;
+    }
+
+    public static JavaSecurityProviderAccess getJavaSecurityProviderAccess() {
+        var access = javaSecurityProviderAccess;
+        if (access == null) {
+            ensureClassInitialized(Provider.class);
+            access = javaSecurityProviderAccess;
         }
         return access;
     }

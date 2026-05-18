@@ -37,6 +37,7 @@ import javax.crypto.SecretKey;
 import javax.security.auth.DestroyFailedException;
 import javax.security.auth.callback.*;
 
+import sun.security.jca.ProvidersFilter;
 import sun.security.util.Debug;
 import sun.security.util.CryptoAlgorithmConstraints;
 
@@ -857,6 +858,13 @@ public class KeyStore {
      * {@systemProperty jdk.crypto.disabledAlgorithms} is set, it supersedes
      * the security property value.
      * </li>
+     * <li>the {@code jdk.security.providers.filter}
+     * {@link System#getProperty(String) System} and
+     * {@link Security#getProperty(String) Security} properties to determine
+     * which {@linkplain java.security.Provider.Service services} are enabled.
+     * A service that is not enabled by the filter will not make its type
+     * implementation available.
+     * </li>
      * </ul>
      *
      * @param type the type of keystore.
@@ -906,11 +914,21 @@ public class KeyStore {
      *
      * @implNote
      * The JDK Reference Implementation additionally uses
-     * the {@code jdk.crypto.disabledAlgorithms}
+     * <ul>
+     * <li>the {@code jdk.crypto.disabledAlgorithms}
      * {@link Security#getProperty(String) Security} property to determine
      * if the specified keystore type is allowed. If the
      * {@systemProperty jdk.crypto.disabledAlgorithms} is set, it supersedes
      * the security property value.
+     * </li>
+     * <li>the {@code jdk.security.providers.filter}
+     * {@link System#getProperty(String) System} and
+     * {@link Security#getProperty(String) Security} properties to determine
+     * which {@linkplain java.security.Provider.Service services} are enabled.
+     * A service that is not enabled by the filter will not make its type
+     * implementation available.
+     * </li>
+     * </ul>
      *
      * @param type the type of keystore.
      * See the KeyStore section in the <a href=
@@ -968,11 +986,21 @@ public class KeyStore {
      *
      * @implNote
      * The JDK Reference Implementation additionally uses
-     * the {@code jdk.crypto.disabledAlgorithms}
+     * <ul>
+     * <li>the {@code jdk.crypto.disabledAlgorithms}
      * {@link Security#getProperty(String) Security} property to determine
      * if the specified keystore type is allowed. If the
      * {@systemProperty jdk.crypto.disabledAlgorithms} is set, it supersedes
      * the security property value.
+     * </li>
+     * <li>the {@code jdk.security.providers.filter}
+     * {@link System#getProperty(String) System} and
+     * {@link Security#getProperty(String) Security} properties to determine
+     * which {@linkplain java.security.Provider.Service services} are enabled.
+     * A service that is not enabled by the filter will not make its type
+     * implementation available.
+     * </li>
+     * </ul>
      *
      * @param type the type of keystore.
      * See the KeyStore section in the <a href=
@@ -1754,11 +1782,21 @@ public class KeyStore {
      *
      * @implNote
      * The JDK Reference Implementation additionally uses
-     * the {@code jdk.crypto.disabledAlgorithms}
+     * <ul>
+     * <li>the {@code jdk.crypto.disabledAlgorithms}
      * {@link Security#getProperty(String) Security} property to determine
      * if the specified keystore type is allowed. If the
      * {@systemProperty jdk.crypto.disabledAlgorithms} is set, it supersedes
      * the security property value. Disallowed type will be skipped.
+     * </li>
+     * <li>the {@code jdk.security.providers.filter}
+     * {@link System#getProperty(String) System} and
+     * {@link Security#getProperty(String) Security} properties to determine
+     * which {@linkplain java.security.Provider.Service services} are enabled.
+     * A service that is not enabled by the filter will not make its type
+     * implementation available.
+     * </li>
+     * </ul>
      *
      * @param  file the keystore file
      * @param  password the keystore password, which may be {@code null}
@@ -1815,11 +1853,21 @@ public class KeyStore {
      *
      * @implNote
      * The JDK Reference Implementation additionally uses
-     * the {@code jdk.crypto.disabledAlgorithms}
+     * <ul>
+     * <li>the {@code jdk.crypto.disabledAlgorithms}
      * {@link Security#getProperty(String) Security} property to determine
      * if the specified keystore type is allowed. If the
      * {@systemProperty jdk.crypto.disabledAlgorithms} is set, it supersedes
      * the security property value. Disallowed type will be skipped.
+     * </li>
+     * <li>the {@code jdk.security.providers.filter}
+     * {@link System#getProperty(String) System} and
+     * {@link Security#getProperty(String) Security} properties to determine
+     * which {@linkplain java.security.Provider.Service services} are enabled.
+     * A service that is not enabled by the filter will not make its type
+     * implementation available.
+     * </li>
+     * </ul>
      *
      * @param  file the keystore file
      * @param  param the {@code LoadStoreParameter} that specifies how to load
@@ -1882,7 +1930,8 @@ public class KeyStore {
             // Detect the keystore type
             for (Provider p : Security.getProviders()) {
                 for (Provider.Service s : p.getServices()) {
-                    if (s.getType().equals("KeyStore")) {
+                    if (ProvidersFilter.isAllowed(s) &&
+                            s.getType().equals("KeyStore")) {
                         try {
                             KeyStoreSpi impl = (KeyStoreSpi) s.newInstance(null);
                             if (impl.engineProbe(dataStream)) {
